@@ -37,16 +37,16 @@ This repository extends **OpenAirInterface (OAI)** with a **drift-plus-penalty M
 oai-mac-ai-scheduler/
 ├── openairinterface5g/
 │   ├── openair2/LAYER2/NR_MAC_gNB/
-│   │    └─── gNB_scheduler_dlsch.c                 # DPP MAC scheduler implementation
+│   │    └─── gNB_scheduler_dlsch.c               # DPP MAC scheduler implementation
 │   └── openair2/E2AP/
 │        ├── flexric/
-│        │     ├── examples/xApp/python3/
-│        │     │    └─── xapp_drl_scheduling.py     # Custom xApp (RAN-AI connector)
-│        │     └─── src/sm/mac_sm/                  # Extended MAC Service Model
+│        │    ├── examples/xApp/python3/
+│        │    │    └─── xapp_drl_scheduling.py    # Custom xApp (RAN-AI connector)
+│        │    └── src/sm/mac_sm/                  # Extended MAC Service Model
 │        └── RAN_FUNCTION/CUSTOMIZED/
-│             └─── ran_func_mac.c                   # E2-MAC interface
-├── env/                                            # DRL environments
-└─── server_drl.py                                   # REST API server (AI module)
+│             └── ran_func_mac.c                  # E2-MAC interface
+├── env/                                          # DRL environments
+└── server_drl.py                                 # REST API server (AI module)
 ```
 
 ## Build and Run
@@ -79,7 +79,7 @@ See [References](#references) for complete installation.
 
 4. **Plot collected metrics**
 
-Open: ``openairinterface5g/figs/plot_metrics.ipynb`` in Jupyter to visualize results.
+Open ``openairinterface5g/figs/plot_metrics.ipynb`` in Jupyter to visualize results.
 
 ## References
 
