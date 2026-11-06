@@ -6,7 +6,7 @@ This is an AI-generated, human-verified/modified document.
 
 The repository contains the OAI downlink scheduler, the custom FlexRIC MAC service model, the Python xApp, and the external RL server. It also contains an OAI CN5G Compose example and its subscriber database. The AI control loop has source-level defects listed below; it is **not yet verified end to end**.
 
-The build and deployment commands below are a proposed Linux bring-up procedure, checked against the bundled source and documentation (by AI). They have not been run on a POWDER node. The local assessment host is macOS/ARM.
+The initial assessment was performed on macOS/ARM (by AI). A subsequent, manually executed POWDER session reached a single-UE downlink UDP baseline and the experimenter reported that the repaired FlexRIC tests passed. See the [lab checkpoint](LAB_CHECKPOINT.md) for the observed result, required source fixes, and evidence still to collect. The commands below incorporate the configuration corrections from that session; the AI loop remains pending.
 
 Recommended first experiment:
 
@@ -16,7 +16,8 @@ Recommended first experiment:
 - Run the core containers, gNB, **one** RFsim nrUE, nearRT-RIC, xApp, and AI server on this node. RFsim transports samples over software sockets; no SDR allocation is needed for this stage.
 - Keep RIC/AI connections on loopback and core traffic on the Docker bridge. Later multi-host experiments should use POWDER's experimental network.
 
-Use a single-node bare-metal profile with hardware type **`d430`** and an **Ubuntu 24.04** image. POWDER also advertises an `oai_nr_sim` profile, but its installed OAI version/configuration must be checked: this experiment needs **this repository's modified sources**.
+Use a single-node bare-metal profile with hardware type **`d430`** and an **Ubuntu 24.04** image. The guided session used the
+[`PortalProfiles/single-pc`](https://www.powderwireless.net/p/PortalProfiles/single-pc) template as the starting point. POWDER also advertises an `oai_nr_sim` profile, but its installed OAI version/configuration must be checked: this experiment needs **this repository's modified sources**.
 
 References: [POWDER hardware](https://docs.powderwireless.net/hardware.html), [starter profiles](https://docs.powderwireless.net/powder-profiles.html), [reservations](https://docs.powderwireless.net/reservations.html).
 
@@ -122,20 +123,29 @@ swig -version
 python3 --version
 ```
 
-Ubuntu 24.04 provides Python 3.12 and a sufficiently recent SWIG. This FlexRIC requires **SWIG >= 4.1** and explicitly rejects GCC 11. Install Docker Engine and the Compose plugin using the [bundled core prerequisites](../openairinterface5g/doc/NR_SA_Tutorial_OAI_CN5G.md#21-oai-cn5g-pre-requisites), then verify `docker info` and `docker compose version` as the experiment user.
+Ubuntu 24.04 provides Python 3.12 and a sufficiently recent SWIG. This FlexRIC requires **SWIG >= 4.1** and explicitly rejects GCC 11. Docker installation and verification using Ubuntu's packages are included in the core startup section below.
 
 ### FlexRIC, including the Python SDK
+
+The original checkout requires the SWIG example-copy and KPM SQLite/test-data
+fixes recorded in [the troubleshooting ledger](LAB_CHECKPOINT.md#3-procedure-and-troubleshooting-ledger).
+Use the corrected source revision/diff from your POWDER session when reproducing
+the lab. Those fixes were applied manually on the node.
+
 
 ```bash
 cmake -S "$FLEXRIC" -B "$FLEXRIC/build" \
   -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13 \
   -DCMAKE_BUILD_TYPE=Debug -DXAPP_MULTILANGUAGE=ON \
+  -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_INSTALL_LIBDIR=lib \
   -DPython3_EXECUTABLE=/usr/bin/python3 \
+  -DPYTHON_INCLUDE_DIR=/usr/include/python3.12 \
+  -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.12.so \
   -DE2AP_VERSION=E2AP_V2 -DKPM_VERSION=KPM_V2_03
 cmake --build "$FLEXRIC/build" -j8
 sudo cmake --install "$FLEXRIC/build"
 sudo ldconfig
-ctest --test-dir "$FLEXRIC/build" --output-on-failure -j8
+ctest --test-dir "$FLEXRIC/build" --output-on-failure --parallel 4 --timeout 120
 ```
 
 Keep build/test output if any target fails; the extended service model must be checked with its bundled tests, rather than assuming upstream tests cover the new arrays. Default installation places SMs in `/usr/local/lib/flexric/` and the configuration in `/usr/local/etc/flexric/flexric.conf`.
@@ -145,18 +155,38 @@ Keep build/test output if any target fails; the extended service model must be c
 ```bash
 cd "$OAI/cmake_targets"
 ./build_oai -I -w SIMU
-CC=gcc-13 CXX=g++-13 ./build_oai --gNB --nrUE -w SIMU --build-e2 --ninja \
-  --cmake-opt -DE2AP_VERSION=E2AP_V2 \
-  --cmake-opt -DKPM_VERSION=KPM_V2_03
+
+export OAI_BUILD="$OAI/cmake_targets/ran_build/build"
+cmake -S "$OAI" -B "$OAI_BUILD" -G "Unix Makefiles" \
+  -DCMAKE_C_COMPILER=/usr/bin/gcc-13 \
+  -DCMAKE_CXX_COMPILER=/usr/bin/g++-13 \
+  -DOAI_SIMU=ON -DAVX512=OFF \
+  -DE2_AGENT:STRING=ON \
+  -DE2AP_VERSION:STRING=E2AP_V2 \
+  -DKPM_VERSION:STRING=KPM_V2_03
+
+grep -E '^(CMAKE_GENERATOR|E2_AGENT|E2AP_VERSION|KPM_VERSION):' \
+  "$OAI_BUILD/CMakeCache.txt"
 ```
 
-The OAI and FlexRIC E2AP/KPM versions must match. Expected OAI binaries are under `$OAI/cmake_targets/ran_build/build/`. Build from this source tree to retain the DPP scheduler and extended MAC SM.
+Verify that the cache says `E2_AGENT=ON`, `E2AP_V2`, and `KPM_V2_03` before compiling. The guided session encountered both a Ninja/Makefiles generator mismatch and a successful build with E2 disabled. Its existing build tree used Unix Makefiles. Investigate configuration errors or unexpected cache values before proceeding.
+
+```bash
+cmake --build "$OAI_BUILD" --parallel 8 \
+  --target nr-softmodem nr-cuup nr-uesoftmodem \
+    params_libconfig coding rfsimulator dfts params_yaml vrtsim
+
+nm "$OAI_BUILD/nr-softmodem" \
+  | grep -E ' (init_agent_api|read_mac_sm|write_ctrl_mac_sm)$'
+```
+
+The OAI and FlexRIC E2AP/KPM versions must match. Expected OAI binaries are under
+`$OAI/cmake_targets/ran_build/build/`. Build from this source tree to retain the
+DPP scheduler and extended MAC SM.
 
 ### AI Python environment (CPU)
 
-The root `requirements.txt` is a full environment freeze containing Linux/CUDA
-packages and does not list the xApp's `requests` dependency. For the initial
-Ubuntu 24.04 CPU setup, install the direct runtime dependencies instead:
+The root `requirements.txt` is a full environment freeze containing Linux/CUDA packages and does not list the xApp's `requests` dependency. For the initial Ubuntu 24.04 CPU setup, install the direct runtime dependencies instead:
 
 ```bash
 cd "$REPO"
@@ -177,14 +207,43 @@ Start each foreground process in a separate terminal/tmux pane. Check each miles
 
 ### Core
 
+The guided setup used Ubuntu's Docker Engine and Compose v2 packages. On a node that does not already have a working Docker installation:
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2
+sudo systemctl enable --now docker
+sudo docker version
+sudo docker compose version
+```
+
+Start the data-connectivity services using Bash:
+
 ```bash
 cd "$OAI/doc/tutorial_resources/oai-cn5g"
-docker compose pull
-docker compose up -d
-docker compose ps
-docker compose logs --tail=100 oai-amf oai-smf oai-upf
+CORE_SERVICES=(mysql oai-nrf oai-udr oai-udm oai-ausf oai-amf oai-smf oai-upf oai-ext-dn)
+sudo modprobe sctp
+sudo docker compose config --quiet
+sudo docker compose pull "${CORE_SERVICES[@]}"
+sudo docker compose up -d --wait --wait-timeout 180 mysql oai-nrf
+sudo docker compose up -d --wait --wait-timeout 240 "${CORE_SERVICES[@]}"
+sudo docker compose ps -a
+sudo docker compose logs --tail=100 oai-amf oai-smf oai-upf
 ip -4 addr show dev oai-cn5g
 ```
+
+Confirm that the first test subscriber was loaded:
+
+```bash
+sudo docker compose exec -T mysql mysql -utest -ptest oai_db \
+  -e "SELECT ueid, authenticationMethod FROM AuthenticationSubscription WHERE ueid = '001010000000001';"
+```
+
+Expected: one row for `001010000000001` with authentication method `5G_AKA`.
+
+For a same-node resume, use the staged startup commands with the already
+downloaded images. Preserve the existing containers/database with
+`docker compose stop` when pausing; see the checkpoint for the full shutdown order and evidence capture.
 
 The bundled core uses `192.168.70.128/26`: AMF `.132`, UPF `.134`, external data network `.135`. The Docker bridge normally receives `.129`; confirm it before using the commands below. The subscriber database contains IMSI `001010000000001`, DNN `oai`, SST `1`, and its test authentication material.
 
@@ -193,8 +252,10 @@ The Compose images use moving `develop`/`latest` tags. Record pulled image diges
 ### nearRT-RIC
 
 ```bash
+set -o pipefail
 "$FLEXRIC/build/examples/ric/nearRT-RIC" \
-  -c /usr/local/etc/flexric/flexric.conf -p /usr/local/lib/flexric/
+  -c /usr/local/etc/flexric/flexric.conf -p /usr/local/lib/flexric/ \
+  2>&1 | tee "$HOME/nearRT-RIC.log"
 ```
 
 The bundled configuration uses `NEAR_RIC_IP = 127.0.0.1`.
@@ -205,33 +266,45 @@ The bundled `gnb.sa.band78.fr1.106PRB.usrpb210.conf` was customized for a differ
 
 ```bash
 cd "$OAI/cmake_targets/ran_build/build"
+set -o pipefail
 sudo ./nr-softmodem \
   -O "$OAI/targets/PROJECTS/GENERIC-NR-5GC/CONF/gnb.sa.band78.fr1.106PRB.usrpb210.conf" \
   --rfsim \
-  --gNBs.[0].min_rxtxtime 6 \
-  --gNBs.[0].plmn_list.[0].mcc 001 \
-  --gNBs.[0].plmn_list.[0].mnc 01 \
-  --gNBs.[0].plmn_list.[0].mnc_length 2 \
-  --gNBs.[0].amf_ip_address.[0].ipv4 192.168.70.132 \
-  --gNBs.[0].NETWORK_INTERFACES.GNB_IPV4_ADDRESS_FOR_NG_AMF 192.168.70.129/26 \
-  --gNBs.[0].NETWORK_INTERFACES.GNB_IPV4_ADDRESS_FOR_NGU 192.168.70.129/26 \
-  --RUs.[0].nb_tx 1 --RUs.[0].nb_rx 1 \
+  --rfsimulator.serveraddr server \
+  '--gNBs.[0].min_rxtxtime' 6 \
+  '--gNBs.[0].plmn_list.[0].mcc' 001 \
+  '--gNBs.[0].plmn_list.[0].mnc' 01 \
+  '--gNBs.[0].plmn_list.[0].mnc_length' 2 \
+  '--gNBs.[0].amf_ip_address.[0].ipv4' 192.168.70.132 \
+  '--gNBs.[0].NETWORK_INTERFACES.GNB_IPV4_ADDRESS_FOR_NG_AMF' 192.168.70.129 \
+  '--gNBs.[0].NETWORK_INTERFACES.GNB_IPV4_ADDRESS_FOR_NGU' 192.168.70.129 \
+  '--RUs.[0].nb_tx' 1 '--RUs.[0].nb_rx' 1 \
   --e2_agent.near_ric_ip_addr 127.0.0.1 \
-  --e2_agent.sm_dir /usr/local/lib/flexric/
+  --e2_agent.sm_dir /usr/local/lib/flexric/ \
+  --log_config.global_log_level info \
+  --log_config.ngap_log_level info \
+  --log_config.rrc_log_level info \
+  --log_config.mac_log_level warning \
+  2>&1 | tee "$HOME/gnb-rfsim.log"
 ```
 
-Use Bash for these commands; shells with strict unmatched-glob handling need the bracket-containing option names quoted. Expect an NG setup with the AMF and an E2 setup with the RIC. The configuration includes an `e2_agent` block.
+Expect an NG setup with the AMF and an E2 setup with the RIC. The configuration includes an `e2_agent` block. Leave the gNB running while it waits for the RFsim peer, then start the UE. The MAC log level limits the custom scheduler's per-slot informational output.
 
 ### One nrUE
 
 ```bash
 cd "$OAI/cmake_targets/ran_build/build"
+set -o pipefail
 sudo ./nr-uesoftmodem -r 106 --numerology 1 --band 78 -C 3619200000 \
   --rfsim --rfsimulator.serveraddr 127.0.0.1 \
-  --uicc0.imsi 001010000000001
+  --uicc0.imsi 001010000000001 \
+  --uicc0.key fec86ba6eb707ed08905757b1bb44b8f \
+  --uicc0.opc C42449363BBAD02B66D16BC975D77CC1 \
+  --uicc0.dnn oai --uicc0.nssai_sst 1 \
+  2>&1 | tee "$HOME/ue-rfsim.log"
 ```
 
-This uses the nrUE's default test credentials, matching the bundled core's subscriber. Check registration, PDU session establishment, and the assigned IP:
+These are the bundled core's test credentials. The supplied `ue.conf` contains another testbed's credentials/DNN and a satellite-channel include, so this command sets the subscriber parameters explicitly. Check registration, PDU session establishment, and the assigned IP:
 
 ```bash
 ip -4 addr show dev oaitun_ue1
@@ -241,13 +314,14 @@ ping -c 5 -I oaitun_ue1 192.168.70.135
 Generate **downlink** traffic to exercise the modified scheduler. The database requests `10.0.0.2` for the first UE; substitute the actual TUN address if different. Start the UDP receiver on the node:
 
 ```bash
-iperf -s -u -B 10.0.0.2 -i 1
+iperf -s -u -B 10.0.0.2 -i 1 2>&1 | tee "$HOME/iperf-server.log"
 ```
 
 Then send from the external data-network container in another terminal:
 
 ```bash
-docker exec oai-ext-dn iperf -c 10.0.0.2 -u -i 1 -t 30 -b 5M
+sudo docker exec oai-ext-dn iperf -c 10.0.0.2 -u -i 1 -t 30 -b 5M \
+  2>&1 | tee "$HOME/iperf-client.log"
 ```
 
 Require received traffic at the UE and rising gNB DL byte/RB counters. A sender report alone does not establish successful delivery.
@@ -282,8 +356,11 @@ Success means UE attachment, working downlink data, sustained telemetry,
 valid AI responses, and demonstrated application of controls at the gNB.
 Improved scheduling performance is a separate experiment requiring a fixed baseline, reproducible load/channel conditions, and consistent metrics.
 
-Then add a second UE using the bundled [multi-UE namespace tutorial](../openairinterface5g/doc/NR_SA_Tutorial_OAI_multi_UE.md). The namespace isolation avoids confusing host-local routing with traffic that actually traverses the UE and core. Expand to four UEs after count/identity and reward handling are verified.
+Then add a second UE using the bundled [multi-UE namespace tutorial](../openairinterface5g/doc/NR_SA_Tutorial_OAI_multi_UE.md). The namespace isolation avoids confusing host-local routing with traffic that
+actually traverses the UE and core. Expand to four UEs after count/identity and reward handling are verified.
 
-## 6. Next information needed
+## 6. Pause, resume, and lab records
 
-After reserving the node, provide its **SSH login command**, allocated hardware type, OS version, and available disk/RAM. The first remote work is to verify the toolchain and build this exact source, then work through the milestones above. Preserve build logs, configuration, image digests, model settings, and the final Git diff with the successful experiment.
+The experimenter runs the commands on POWDER and shares relevant output when diagnosis is needed. Preserve build logs, configuration, image digests, model settings, and the actual Git revision/diff with each experiment.
+
+See the [lab checkpoint](LAB_CHECKPOINT.md) for the shutdown order, same-node restart procedure, evidence-bundle commands, recorded downlink result, and a lab-assignment outline. Archive logs before restarting and download the bundle before terminating or allowing the POWDER experiment to expire.
