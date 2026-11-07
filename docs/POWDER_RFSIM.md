@@ -205,6 +205,38 @@ Build the SDK and run the xApp with the same Python major/minor ABI. Keep the AI
 
 Start each foreground process in a separate terminal/tmux pane. Check each milestone before moving on.
 
+### Startup scripts
+
+The repository provides launchers for the settings used in this procedure. They require the completed native builds, installed FlexRIC service models, and Docker Engine with Compose v2 on the POWDER Linux node.
+
+Run the launchers as your normal user; they invoke `sudo` where needed. In each terminal, start from your checkout:
+
+```bash
+cd "$HOME/oai-mac-ai-scheduler"
+```
+
+Run in this order, giving each foreground process its own terminal:
+
+| Order | Script | Underlying component |
+| --- | --- | --- |
+| 1 | [`./scripts/run_core.sh start`](../scripts/run_core.sh) | `doc/tutorial_resources/oai-cn5g/docker-compose.yaml` under the OAI tree; starts MySQL/NRF before the other data services. |
+| 2 | [`./scripts/run_ric.sh`](../scripts/run_ric.sh) | `flexric/build/examples/ric/nearRT-RIC` |
+| 3 | [`./scripts/run_gnb.sh`](../scripts/run_gnb.sh) | `cmake_targets/ran_build/build/nr-softmodem` under the OAI tree |
+| 4 | [`./scripts/run_ue.sh`](../scripts/run_ue.sh) | `cmake_targets/ran_build/build/nr-uesoftmodem` under the OAI tree |
+
+The core launcher returns after startup; the RIC, gNB, and UE remain in the foreground. The gNB launcher checks that its build cache has `E2_AGENT=ON`. Confirm actual E2 setup in the running RIC/gNB logs as well.
+
+Each RIC/gNB/UE launch prints its log path and writes to `~/oai-run-logs/<component>-<timestamp>-<pid>.log`. Set `LOG_DIR` to choose another directory. The gNB's QoS CSV still resides in the OAI build directory and should be archived before restarting it. The core's logs remain accessible through Docker Compose:
+
+```bash
+./scripts/run_core.sh status
+./scripts/run_core.sh logs oai-amf oai-smf oai-upf
+```
+
+Use `--help` on each launcher for supported environment overrides. Defaults match the address/subscriber tables in this runbook. If changing `RIC_IP`, also align the installed FlexRIC configuration used by the Python SDK. The scripts reuse downloaded images on a same-node restart; Compose pulls missing images on first startup. Stop the foreground processes in the checkpoint's shutdown order, then use `./scripts/run_core.sh stop` to pause the core.
+
+The following subsections retain the equivalent commands and verification steps for understanding and troubleshooting the individual components.
+
 ### Core
 
 The guided setup used Ubuntu's Docker Engine and Compose v2 packages. On a node that does not already have a working Docker installation:

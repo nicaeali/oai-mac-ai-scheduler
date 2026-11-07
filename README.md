@@ -46,10 +46,16 @@ oai-mac-ai-scheduler/
 │        └── RAN_FUNCTION/CUSTOMIZED/
 │             └── ran_func_mac.c                  # E2-MAC interface
 ├── env/                                          # DRL environments
+├── scripts/                                      # Core, RIC, gNB, and nrUE launchers
 └── server_drl.py                                 # REST API server (AI module)
+└── monitor_mac.py                                # Read-only MAC telemetry helper
 ```
 
 ## Build and Run
+
+For a source-level readiness assessment and a staged single-node POWDER **d430** RFsim deployment procedure, see [POWDER d430 RFsim bring-up](docs/POWDER_RFSIM.md). It records the current AI control-loop blockers, required toolchain, and core/gNB settings that must match before running this testbed.
+
+The [lab checkpoint](docs/LAB_CHECKPOINT.md) records the guided POWDER session's fixes and downlink result, evidence still to collect, shutdown/restart steps, and a lab-assignment outline.
 
 1. **Clone the repository**
 
@@ -80,6 +86,34 @@ See [References](#references) for complete installation.
 4. **Plot collected metrics**
 
 Open ``openairinterface5g/figs/plot_metrics.ipynb`` in Jupyter to visualize results.
+
+## POWDER RFsim startup scripts
+
+After building OAI/FlexRIC and installing the service models and Docker, run the launchers on the **POWDER Linux node** as your normal user; they invoke `sudo` where needed. From the repository root:
+
+| Order | Command | Component |
+| --- | --- | --- |
+| 1 | `./scripts/run_core.sh start` | Start the bundled core containers and wait for readiness. |
+| 2 | `./scripts/run_ric.sh` | Start nearRT-RIC in a foreground terminal. |
+| 3 | `./scripts/run_gnb.sh` | Start the E2-enabled gNB in another terminal. |
+| 4 | `./scripts/run_ue.sh` | Start one RFsim UE in another terminal. |
+
+The scripts resolve the checkout location automatically and use the configuration from the single-node d430 procedure. Run each script with `--help` for its
+environment overrides. RIC/gNB/UE logs have timestamped filenames under `~/oai-run-logs/` (override with `LOG_DIR`).
+
+Use `./scripts/run_core.sh status` to inspect the core and `./scripts/run_core.sh logs oai-amf oai-smf oai-upf` for recent core logs. To pause, stop traffic and any xApp, then stop the UE, gNB, and RIC with Ctrl+C. Finally, `./scripts/run_core.sh stop` stops the containers while retaining their storage. See the [runbook](docs/POWDER_RFSIM.md#startup-scripts) for the startup checks and the equivalent underlying commands.
+
+## Read-only MAC telemetry
+
+With the nearRT-RIC, one E2-enabled gNB, and an attached UE running, use the repository's [MAC monitor](monitor_mac.py) to check the Python telemetry path:
+
+```bash
+export FLEXRIC="$PWD/openairinterface5g/openair2/E2AP/flexric"
+export PYTHONPATH="$FLEXRIC/build/src/xApp/swig${PYTHONPATH:+:$PYTHONPATH}"
+python3 -u monitor_mac.py --duration 20
+```
+
+Run these commands from the repository root with the same Python major/minor version used to build the SDK. The helper subscribes to one-second MAC reports, prints RNTI, flow count, raw downlink MCS, and cumulative MAC byte/PRB counters, then unsubscribes and shuts down. It is a bring-up utility independent of the AI server. See the [RFsim runbook](docs/POWDER_RFSIM.md#read-only-mac-telemetry) for prerequisites and expected output.
 
 ## References
 

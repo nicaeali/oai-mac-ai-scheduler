@@ -294,9 +294,9 @@ for f in \
 do
   if [ -f "$f" ]; then cp "$f" "$SNAPSHOT/"; fi
 done
-if [ -d "$HOME/oai-build-logs" ]; then
-  cp -a "$HOME/oai-build-logs" "$SNAPSHOT/"
-fi
+for d in "$HOME/oai-build-logs" "${LOG_DIR:-$HOME/oai-run-logs}"; do
+  if [ -d "$d" ]; then cp -a "$d" "$SNAPSHOT/"; fi
+done
 
 {
   date -Is
@@ -354,6 +354,8 @@ The container images use moving tags such as `develop`. Use the recorded image
 digests and source revision when preparing a reproducible student release.
 
 ## 7. Resume the same experiment
+
+The repository now provides `scripts/run_core.sh`, `scripts/run_ric.sh`, `scripts/run_gnb.sh`, and `scripts/run_ue.sh` for these steps. See [startup script usage](POWDER_RFSIM.md#startup-scripts). The RIC/gNB/UE launchers write timestamped logs under `~/oai-run-logs/`, which the evidence export above also collects. If using a custom `LOG_DIR`, set the same value when exporting.
 
 1. Reconnect to the still-allocated POWDER node and restore the environment variables from the runbook. Recompilation is only needed after relevant source/configuration changes.
 2. If the core was stopped, use the runbook's staged `docker compose up -d --wait` commands: MySQL/NRF first, then the full service set. Check container health.
